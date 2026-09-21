@@ -25,8 +25,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -41,7 +43,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
+            // Force Dark Scheme so all default text colors inherit white/light gray
+            MaterialTheme(colorScheme = darkColorScheme()) {
                 AppNavigator()
             }
         }
@@ -112,6 +115,7 @@ fun LoginScreen(initialIp: String, onLoginSuccess: (String, String) -> Unit) {
             onValueChange = { ip = it },
             label = { Text("Server Address (e.g. 192.168.1.10:8000)", color = labelColor) },
             singleLine = true,
+            textStyle = TextStyle(color = textColor, fontSize = 16.sp),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = textColor,
                 unfocusedTextColor = textColor,
@@ -127,6 +131,7 @@ fun LoginScreen(initialIp: String, onLoginSuccess: (String, String) -> Unit) {
             onValueChange = { username = it },
             label = { Text("Username", color = labelColor) },
             singleLine = true,
+            textStyle = TextStyle(color = textColor, fontSize = 16.sp),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = textColor,
                 unfocusedTextColor = textColor,
@@ -143,6 +148,7 @@ fun LoginScreen(initialIp: String, onLoginSuccess: (String, String) -> Unit) {
             label = { Text("Password", color = labelColor) },
             visualTransformation = PasswordVisualTransformation(),
             singleLine = true,
+            textStyle = TextStyle(color = textColor, fontSize = 16.sp),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = textColor,
                 unfocusedTextColor = textColor,
@@ -299,9 +305,10 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
     var totalDuration by remember { mutableStateOf(1L) }
     var gestureOverlayText by remember { mutableStateOf<String?>(null) }
 
+    // Auto-hide controls after 4 seconds of inactivity
     LaunchedEffect(showControls) {
         if (showControls) {
-            delay(3000)
+            delay(4000)
             showControls = false
         }
     }
@@ -333,6 +340,7 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
             .fillMaxSize()
             .background(Color.Black)
     ) {
+        // Video View
         AndroidView(
             factory = { ctx ->
                 VLCVideoLayout(ctx).apply {
@@ -347,12 +355,15 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
             modifier = Modifier.fillMaxSize()
         )
 
+        // Gesture Overlay Layer (Captures taps & drag gestures everywhere on screen)
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {
                     detectTapGestures(
-                        onTap = { showControls = !showControls }
+                        onTap = { 
+                            showControls = !showControls 
+                        }
                     )
                 }
                 .pointerInput(Unit) {
@@ -402,6 +413,7 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                 }
         )
 
+        // On-screen Gesture Feedback (e.g. Seeking / Volume indicator)
         gestureOverlayText?.let { text ->
             Box(
                 modifier = Modifier
@@ -413,6 +425,7 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
             }
         }
 
+        // Visible Control Overlay
         AnimatedVisibility(
             visible = showControls,
             enter = fadeIn(),
@@ -422,8 +435,9 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.4f))
+                    .background(Color.Black.copy(alpha = 0.5f))
             ) {
+                // Top Row Controls
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -437,6 +451,7 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                     }
                 }
 
+                // Center Play/Pause & Skip Buttons
                 Row(
                     modifier = Modifier.align(Alignment.Center),
                     horizontalArrangement = Arrangement.spacedBy(24.dp),
@@ -446,6 +461,7 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                         val target = (mediaPlayer.time - 10000L).coerceAtLeast(0L)
                         mediaPlayer.time = target
                         currentPosition = target
+                        showControls = true
                     }) {
                         Text("-10s")
                     }
@@ -458,6 +474,7 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                             mediaPlayer.play()
                             isPlaying = true
                         }
+                        showControls = true
                     }) {
                         Text(if (isPlaying) "Pause" else "Play")
                     }
@@ -466,11 +483,13 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                         val target = (mediaPlayer.time + 10000L).coerceAtMost(totalDuration)
                         mediaPlayer.time = target
                         currentPosition = target
+                        showControls = true
                     }) {
                         Text("+10s")
                     }
                 }
 
+                // Bottom Timeline Slider & Timestamps
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -490,6 +509,7 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                         onValueChange = { newValue ->
                             currentPosition = newValue.toLong()
                             mediaPlayer.time = newValue.toLong()
+                            showControls = true
                         },
                         valueRange = 0f..totalDuration.toFloat(),
                         modifier = Modifier.fillMaxWidth()
