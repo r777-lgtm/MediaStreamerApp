@@ -1,13 +1,21 @@
 package com.example.mediastreamer
 
 import android.content.Context
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Bundle
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -15,16 +23,20 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.util.VLCVideoLayout
 import java.net.URLEncoder
+import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -212,15 +224,12 @@ fun FileExplorerScreen(
                                 pathHistory.add(nextPath)
                             } else {
                                 val filePath = if (currentPath.endsWith("/")) "$currentPath${item.name}" else "$currentPath/${item.name}"
-                                
-                                // Ensure base URL starts with http:// and has no trailing slash
                                 val formattedBaseUrl = if (ipAddress.startsWith("http://") || ipAddress.startsWith("https://")) {
                                     ipAddress.removeSuffix("/")
                                 } else {
                                     "http://${ipAddress.removeSuffix("/")}"
                                 }
 
-                                // Encodes directory path parameters cleanly (e.g. spaces into %20)
                                 val encodedPath = URLEncoder.encode(filePath, "UTF-8")
                                 val streamUrl = "$formattedBaseUrl/api/media?path=$encodedPath"
 
@@ -238,6 +247,8 @@ fun FileExplorerScreen(
 @Composable
 fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
     val context = LocalContext.current
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+
     val libVLC = remember {
         LibVLC(
             context,
@@ -252,6 +263,31 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
     }
     val mediaPlayer = remember { MediaPlayer(libVLC) }
 
+    var isPlaying by remember { mutableStateOf(true) }
+    var showControls by remember { mutableStateOf(true) }
+    var currentPosition by remember { mutableStateOf(0L) }
+    var totalDuration by remember { mutableStateOf(1L) }
+    var gestureOverlayText by remember { mutableStateOf<String?>(null) }
+
+    // Auto-hide controls after 3 seconds
+    LaunchedEffect(showControls) {
+        if (showControls) {
+            delay(3000)
+            showControls = false
+        }
+    }
+
+    // Periodically update progress slider
+    LaunchedEffect(Unit) {
+        while (true) {
+            if (mediaPlayer.isPlaying) {
+                currentPosition = mediaPlayer.time
+                totalDuration = if (mediaPlayer.length > 0) mediaPlayer.length else 1L
+            }
+            delay(500)
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose {
             mediaPlayer.stop()
@@ -264,7 +300,12 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
         onClose()
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+    ) {
+        // 1. VLC Surface View
         AndroidView(
             factory = { ctx ->
                 VLCVideoLayout(ctx).apply {
@@ -278,5 +319,172 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
             },
             modifier = Modifier.fillMaxSize()
         )
+
+        // 2. Gesture Overlay Layer (Swipe Left/Right = Seek, Swipe Right Vertical = Volume)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onTap = { showControls = !showControls }
+                    )
+                }
+                .pointerInput(Unit) {
+                    var totalDragX = 0f
+                    var totalDragY = 0f
+
+                    detectDragGestures(
+                        onDragStart = {
+                            totalDragX = 0f
+                            totalDragY = 0f
+                        },
+                        onDragEnd = {
+                            gestureOverlayText = null
+                        },
+                        onDragCancel = {
+                            gestureOverlayText = null
+                        },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            totalDragX += dragAmount.x
+                            totalDragY += dragAmount.y
+
+                            // Horizontal Swipe -> Seek Forward / Backward
+                            if (abs(totalDragX) > abs(totalDragY) && abs(totalDragX) > 20f) {
+                                val seekDelta = (totalDragX / 5).toLong() * 1000L
+                                val targetTime = (mediaPlayer.time + seekDelta).coerceIn(0L, totalDuration)
+                                mediaPlayer.time = targetTime
+                                currentPosition = targetTime
+
+                                val seconds = seekDelta / 1000
+                                gestureOverlayText = if (seconds >= 0) "Seek +${seconds}s" else "Seek ${seconds}s"
+                            }
+                            // Vertical Swipe on Right Half -> Adjust Volume
+                            else if (abs(totalDragY) > abs(totalDragX) && change.position.x > size.width / 2) {
+                                val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                                val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+
+                                if (dragAmount.y < -10f) { // Swipe UP
+                                    val newVol = (currentVol + 1).coerceAtMost(maxVol)
+                                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
+                                    gestureOverlayText = "Volume: ${(newVol * 100) / maxVol}%"
+                                } else if (dragAmount.y > 10f) { // Swipe DOWN
+                                    val newVol = (currentVol - 1).coerceAtLeast(0)
+                                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
+                                    gestureOverlayText = "Volume: ${(newVol * 100) / maxVol}%"
+                                }
+                            }
+                        }
+                    )
+                }
+        )
+
+        // 3. Gesture Feedback Overlay Text
+        gestureOverlayText?.let { text ->
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(Color.Black.copy(alpha = 0.7f), shape = MaterialTheme.shapes.medium)
+                    .padding(16.dp)
+            ) {
+                Text(text, color = Color.White, style = MaterialTheme.typography.titleLarge)
+            }
+        }
+
+        // 4. On-Screen Media Controls (Play, Pause, Seek Bar, Jump 10s)
+        AnimatedVisibility(
+            visible = showControls,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.4f))
+            ) {
+                // Top Header Controls
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                        .align(Alignment.TopStart),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onClose) {
+                        Text("✕", color = Color.White, style = MaterialTheme.typography.titleLarge)
+                    }
+                }
+
+                // Center Play / Pause & Quick Jump Controls
+                Row(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(onClick = {
+                        val target = (mediaPlayer.time - 10000L).coerceAtLeast(0L)
+                        mediaPlayer.time = target
+                        currentPosition = target
+                    }) {
+                        Text("-10s")
+                    }
+
+                    Button(onClick = {
+                        if (isPlaying) {
+                            mediaPlayer.pause()
+                            isPlaying = false
+                        } else {
+                            mediaPlayer.play()
+                            isPlaying = true
+                        }
+                    }) {
+                        Text(if (isPlaying) "Pause" else "Play")
+                    }
+
+                    Button(onClick = {
+                        val target = (mediaPlayer.time + 10000L).coerceAtMost(totalDuration)
+                        mediaPlayer.time = target
+                        currentPosition = target
+                    }) {
+                        Text("+10s")
+                    }
+                }
+
+                // Bottom Progress Bar & Timers
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                        .align(Alignment.BottomCenter)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(formatMillis(currentPosition), color = Color.White)
+                        Text(formatMillis(totalDuration), color = Color.White)
+                    }
+
+                    Slider(
+                        value = currentPosition.toFloat(),
+                        onValueChange = { newValue ->
+                            currentPosition = newValue.toLong()
+                            mediaPlayer.time = newValue.toLong()
+                        },
+                        valueRange = 0f..totalDuration.toFloat(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
     }
+}
+
+fun formatMillis(millis: Long): String {
+    val totalSeconds = millis / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return String.format("%02d:%02d", minutes, seconds)
 }
