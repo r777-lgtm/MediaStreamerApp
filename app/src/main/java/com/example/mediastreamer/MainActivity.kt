@@ -4,8 +4,6 @@ import android.content.Context
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Bundle
-import android.view.GestureDetector
-import android.view.MotionEvent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -15,6 +13,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -90,20 +89,19 @@ fun LoginScreen(initialIp: String, onLoginSuccess: (String, String) -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    // Explicit colors for clear readability on dark backgrounds
     val textColor = Color.White
     val labelColor = Color.LightGray
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0F172A)) // Matching the dark theme of the server
+            .background(Color(0xFF0F172A))
             .padding(32.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = "Connect to ASGI Media Server", 
+            text = "Connect to ASGI Media Server",
             style = MaterialTheme.typography.headlineSmall,
             color = textColor
         )
@@ -301,7 +299,6 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
     var totalDuration by remember { mutableStateOf(1L) }
     var gestureOverlayText by remember { mutableStateOf<String?>(null) }
 
-    // Auto-hide controls after 3 seconds
     LaunchedEffect(showControls) {
         if (showControls) {
             delay(3000)
@@ -309,7 +306,6 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
         }
     }
 
-    // Periodically update progress slider
     LaunchedEffect(Unit) {
         while (true) {
             if (mediaPlayer.isPlaying) {
@@ -337,7 +333,6 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        // 1. VLC Surface View
         AndroidView(
             factory = { ctx ->
                 VLCVideoLayout(ctx).apply {
@@ -352,7 +347,6 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
             modifier = Modifier.fillMaxSize()
         )
 
-        // 2. Gesture Overlay Layer (Swipe Left/Right = Seek, Swipe Right Vertical = Volume)
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -381,7 +375,6 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                             totalDragX += dragAmount.x
                             totalDragY += dragAmount.y
 
-                            // Horizontal Swipe -> Seek Forward / Backward
                             if (abs(totalDragX) > abs(totalDragY) && abs(totalDragX) > 20f) {
                                 val seekDelta = (totalDragX / 5).toLong() * 1000L
                                 val targetTime = (mediaPlayer.time + seekDelta).coerceIn(0L, totalDuration)
@@ -390,17 +383,15 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
 
                                 val seconds = seekDelta / 1000
                                 gestureOverlayText = if (seconds >= 0) "Seek +${seconds}s" else "Seek ${seconds}s"
-                            }
-                            // Vertical Swipe on Right Half -> Adjust Volume
-                            else if (abs(totalDragY) > abs(totalDragX) && change.position.x > size.width / 2) {
+                            } else if (abs(totalDragY) > abs(totalDragX) && change.position.x > size.width / 2) {
                                 val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                                 val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
 
-                                if (dragAmount.y < -10f) { // Swipe UP
+                                if (dragAmount.y < -10f) {
                                     val newVol = (currentVol + 1).coerceAtMost(maxVol)
                                     audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
                                     gestureOverlayText = "Volume: ${(newVol * 100) / maxVol}%"
-                                } else if (dragAmount.y > 10f) { // Swipe DOWN
+                                } else if (dragAmount.y > 10f) {
                                     val newVol = (currentVol - 1).coerceAtLeast(0)
                                     audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
                                     gestureOverlayText = "Volume: ${(newVol * 100) / maxVol}%"
@@ -411,7 +402,6 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                 }
         )
 
-        // 3. Gesture Feedback Overlay Text
         gestureOverlayText?.let { text ->
             Box(
                 modifier = Modifier
@@ -423,7 +413,6 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
             }
         }
 
-        // 4. On-Screen Media Controls (Play, Pause, Seek Bar, Jump 10s)
         AnimatedVisibility(
             visible = showControls,
             enter = fadeIn(),
@@ -435,7 +424,6 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.4f))
             ) {
-                // Top Header Controls
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -449,7 +437,6 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                     }
                 }
 
-                // Center Play / Pause & Quick Jump Controls
                 Row(
                     modifier = Modifier.align(Alignment.Center),
                     horizontalArrangement = Arrangement.spacedBy(24.dp),
@@ -484,7 +471,6 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                     }
                 }
 
-                // Bottom Progress Bar & Timers
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
