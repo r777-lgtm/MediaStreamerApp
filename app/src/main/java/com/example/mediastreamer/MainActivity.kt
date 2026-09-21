@@ -3,7 +3,6 @@ package com.example.mediastreamer
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
-import android.view.SurfaceView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -25,6 +24,7 @@ import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.util.VLCVideoLayout
+import java.net.URLEncoder
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -212,8 +212,18 @@ fun FileExplorerScreen(
                                 pathHistory.add(nextPath)
                             } else {
                                 val filePath = if (currentPath.endsWith("/")) "$currentPath${item.name}" else "$currentPath/${item.name}"
-                                val baseUrl = if (ipAddress.startsWith("http")) ipAddress else "http://$ipAddress"
-                                val streamUrl = "$baseUrl/api/media?path=$filePath"
+                                
+                                // Ensure base URL starts with http:// and has no trailing slash
+                                val formattedBaseUrl = if (ipAddress.startsWith("http://") || ipAddress.startsWith("https://")) {
+                                    ipAddress.removeSuffix("/")
+                                } else {
+                                    "http://${ipAddress.removeSuffix("/")}"
+                                }
+
+                                // Encodes directory path parameters cleanly (e.g. spaces into %20)
+                                val encodedPath = URLEncoder.encode(filePath, "UTF-8")
+                                val streamUrl = "$formattedBaseUrl/api/media?path=$encodedPath"
+
                                 onPlayVideo(streamUrl)
                             }
                         }
@@ -228,7 +238,18 @@ fun FileExplorerScreen(
 @Composable
 fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
     val context = LocalContext.current
-    val libVLC = remember { LibVLC(context, arrayListOf("--no-drop-late-frames", "--no-skip-frames", "--rtsp-tcp")) }
+    val libVLC = remember {
+        LibVLC(
+            context,
+            arrayListOf(
+                "--no-drop-late-frames",
+                "--no-skip-frames",
+                "--rtsp-tcp",
+                "--http-reconnect",
+                "--network-caching=1500"
+            )
+        )
+    }
     val mediaPlayer = remember { MediaPlayer(libVLC) }
 
     DisposableEffect(Unit) {
@@ -249,6 +270,7 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                 VLCVideoLayout(ctx).apply {
                     mediaPlayer.attachViews(this, null, false, false)
                     val media = Media(libVLC, Uri.parse(videoUrl))
+                    media.setHWDecoderEnabled(true, false)
                     mediaPlayer.media = media
                     media.release()
                     mediaPlayer.play()
