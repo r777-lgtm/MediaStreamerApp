@@ -90,41 +90,70 @@ fun LoginScreen(initialIp: String, onLoginSuccess: (String, String) -> Unit) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
+    // Explicit colors for clear readability on dark backgrounds
+    val textColor = Color.White
+    val labelColor = Color.LightGray
+
     Column(
-        modifier = Modifier.fillMaxSize().padding(32.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0F172A)) // Matching the dark theme of the server
+            .padding(32.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("Connect to ASGI Media Server", style = MaterialTheme.typography.headlineSmall)
-        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "Connect to ASGI Media Server", 
+            style = MaterialTheme.typography.headlineSmall,
+            color = textColor
+        )
+        Spacer(modifier = Modifier.height(24.dp))
 
         OutlinedTextField(
             value = ip,
             onValueChange = { ip = it },
-            label = { Text("Server Address (e.g. 192.168.1.10:8000)") },
+            label = { Text("Server Address (e.g. 192.168.1.10:8000)", color = labelColor) },
             singleLine = true,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = textColor,
+                unfocusedTextColor = textColor,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = Color.Gray
+            ),
             modifier = Modifier.fillMaxWidth()
         )
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         OutlinedTextField(
             value = username,
             onValueChange = { username = it },
-            label = { Text("Username") },
+            label = { Text("Username", color = labelColor) },
             singleLine = true,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = textColor,
+                unfocusedTextColor = textColor,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = Color.Gray
+            ),
             modifier = Modifier.fillMaxWidth()
         )
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         OutlinedTextField(
             value = password,
             onValueChange = { password = it },
-            label = { Text("Password") },
+            label = { Text("Password", color = labelColor) },
             visualTransformation = PasswordVisualTransformation(),
             singleLine = true,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = textColor,
+                unfocusedTextColor = textColor,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = Color.Gray
+            ),
             modifier = Modifier.fillMaxWidth()
         )
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(24.dp))
 
         Button(
             onClick = {
@@ -152,7 +181,10 @@ fun LoginScreen(initialIp: String, onLoginSuccess: (String, String) -> Unit) {
             enabled = !isLoading,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(if (isLoading) "Connecting..." else "Login")
+            Text(
+                text = if (isLoading) "Connecting..." else "Login",
+                style = MaterialTheme.typography.titleMedium
+            )
         }
     }
 }
