@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            // Force Dark Scheme so all default text colors inherit white/light gray
+            // Apply Dark Scheme across app to fix login input text color
             MaterialTheme(colorScheme = darkColorScheme()) {
                 AppNavigator()
             }
@@ -58,12 +58,17 @@ fun AppNavigator() {
 
     var ipAddress by remember { mutableStateOf(sharedPref.getString("SAVED_IP", "") ?: "") }
     var authToken by remember { mutableStateOf("") }
-    var currentVideoUrl by remember { mutableStateOf<String?>(null) }
+    
+    // State for video playback & playlist navigation
+    var playlist by remember { mutableStateOf<List<String>>(emptyList()) }
+    var currentVideoIndex by remember { mutableStateOf(-1) }
 
-    if (currentVideoUrl != null) {
-        VLCPlayerScreen(videoUrl = currentVideoUrl!!) {
-            currentVideoUrl = null
-        }
+    if (currentVideoIndex in playlist.indices) {
+        VLCPlayerScreen(
+            playlist = playlist,
+            initialIndex = currentVideoIndex,
+            onClose = { currentVideoIndex = -1 }
+        )
     } else if (authToken.isEmpty()) {
         LoginScreen(
             initialIp = ipAddress,
@@ -77,7 +82,10 @@ fun AppNavigator() {
         FileExplorerScreen(
             ipAddress = ipAddress,
             token = authToken,
-            onPlayVideo = { streamUrl -> currentVideoUrl = streamUrl },
+            onPlayVideo = { videoUrls, selectedIndex ->
+                playlist = videoUrls
+                currentVideoIndex = selectedIndex
+            },
             onLogout = { authToken = "" }
         )
     }
@@ -197,7 +205,7 @@ fun LoginScreen(initialIp: String, onLoginSuccess: (String, String) -> Unit) {
 fun FileExplorerScreen(
     ipAddress: String,
     token: String,
-    onPlayVideo: (String) -> Unit,
+    onPlayVideo: (List<String>, Int) -> Unit,
     onLogout: () -> Unit
 ) {
     val pathHistory = remember { mutableStateListOf("/") }
@@ -259,17 +267,22 @@ fun FileExplorerScreen(
                                 val nextPath = if (currentPath.endsWith("/")) "$currentPath${item.name}/" else "$currentPath/${item.name}/"
                                 pathHistory.add(nextPath)
                             } else {
-                                val filePath = if (currentPath.endsWith("/")) "$currentPath${item.name}" else "$currentPath/${item.name}"
+                                // Extract video files only for playlist creation
+                                val videoItems = items.filter { !it.is_dir }
                                 val formattedBaseUrl = if (ipAddress.startsWith("http://") || ipAddress.startsWith("https://")) {
                                     ipAddress.removeSuffix("/")
                                 } else {
                                     "http://${ipAddress.removeSuffix("/")}"
                                 }
 
-                                val encodedPath = URLEncoder.encode(filePath, "UTF-8")
-                                val streamUrl = "$formattedBaseUrl/api/media?path=$encodedPath"
+                                val videoUrls = videoItems.map { video ->
+                                    val filePath = if (currentPath.endsWith("/")) "$currentPath${video.name}" else "$currentPath/${video.name}"
+                                    val encodedPath = URLEncoder.encode(filePath, "UTF-8")
+                                    "$formattedBaseUrl/api/media?path=$encodedPath"
+                                }
 
-                                onPlayVideo(streamUrl)
+                                val selectedIndex = videoItems.indexOf(item).coerceAtLeast(0)
+                                onPlayVideo(videoUrls, selectedIndex)
                             }
                         }
                     )
@@ -281,9 +294,16 @@ fun FileExplorerScreen(
 }
 
 @Composable
-fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
+fun VLCPlayerScreen(
+    playlist: List<String>,
+    initialIndex: Int,
+    onClose: () -> Unit
+) {
     val context = LocalContext.current
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+
+    var currentIndex by remember { mutableStateOf(initialIndex) }
+    val currentVideoUrl = playlist.getOrNull(currentIndex) ?: ""
 
     val libVLC = remember {
         LibVLC(
@@ -305,7 +325,20 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
     var totalDuration by remember { mutableStateOf(1L) }
     var gestureOverlayText by remember { mutableStateOf<String?>(null) }
 
-    // Auto-hide controls after 4 seconds of inactivity
+    // Reload video automatically when currentIndex changes
+    LaunchedEffect(currentIndex) {
+        if (currentVideoUrl.isNotEmpty()) {
+            mediaPlayer.stop()
+            val media = Media(libVLC, Uri.parse(currentVideoUrl))
+            media.setHWDecoderEnabled(true, false)
+            mediaPlayer.media = media
+            media.release()
+            mediaPlayer.play()
+            isPlaying = true
+        }
+    }
+
+    // Auto-hide controls timer
     LaunchedEffect(showControls) {
         if (showControls) {
             delay(4000)
@@ -313,6 +346,7 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
         }
     }
 
+    // Progress updates
     LaunchedEffect(Unit) {
         while (true) {
             if (mediaPlayer.isPlaying) {
@@ -345,25 +379,18 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
             factory = { ctx ->
                 VLCVideoLayout(ctx).apply {
                     mediaPlayer.attachViews(this, null, false, false)
-                    val media = Media(libVLC, Uri.parse(videoUrl))
-                    media.setHWDecoderEnabled(true, false)
-                    mediaPlayer.media = media
-                    media.release()
-                    mediaPlayer.play()
                 }
             },
             modifier = Modifier.fillMaxSize()
         )
 
-        // Gesture Overlay Layer (Captures taps & drag gestures everywhere on screen)
+        // Touch Gesture Capture Layer
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {
                     detectTapGestures(
-                        onTap = { 
-                            showControls = !showControls 
-                        }
+                        onTap = { showControls = !showControls }
                     )
                 }
                 .pointerInput(Unit) {
@@ -375,17 +402,14 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                             totalDragX = 0f
                             totalDragY = 0f
                         },
-                        onDragEnd = {
-                            gestureOverlayText = null
-                        },
-                        onDragCancel = {
-                            gestureOverlayText = null
-                        },
+                        onDragEnd = { gestureOverlayText = null },
+                        onDragCancel = { gestureOverlayText = null },
                         onDrag = { change, dragAmount ->
                             change.consume()
                             totalDragX += dragAmount.x
                             totalDragY += dragAmount.y
 
+                            // Horizontal Drag -> Seek
                             if (abs(totalDragX) > abs(totalDragY) && abs(totalDragX) > 20f) {
                                 val seekDelta = (totalDragX / 5).toLong() * 1000L
                                 val targetTime = (mediaPlayer.time + seekDelta).coerceIn(0L, totalDuration)
@@ -394,7 +418,9 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
 
                                 val seconds = seekDelta / 1000
                                 gestureOverlayText = if (seconds >= 0) "Seek +${seconds}s" else "Seek ${seconds}s"
-                            } else if (abs(totalDragY) > abs(totalDragX) && change.position.x > size.width / 2) {
+                            } 
+                            // Vertical Drag Right Side -> Volume
+                            else if (abs(totalDragY) > abs(totalDragX) && change.position.x > size.width / 2) {
                                 val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                                 val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
 
@@ -413,7 +439,7 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                 }
         )
 
-        // On-screen Gesture Feedback (e.g. Seeking / Volume indicator)
+        // Gesture Overlay Display
         gestureOverlayText?.let { text ->
             Box(
                 modifier = Modifier
@@ -437,7 +463,7 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.5f))
             ) {
-                // Top Row Controls
+                // Top Exit Button
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -451,12 +477,26 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                     }
                 }
 
-                // Center Play/Pause & Skip Buttons
+                // Center Navigation & Play Controls
                 Row(
                     modifier = Modifier.align(Alignment.Center),
-                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Previous Video
+                    Button(
+                        onClick = {
+                            if (currentIndex > 0) {
+                                currentIndex--
+                                showControls = true
+                            }
+                        },
+                        enabled = currentIndex > 0
+                    ) {
+                        Text("⏮ Prev")
+                    }
+
+                    // Seek -10s
                     Button(onClick = {
                         val target = (mediaPlayer.time - 10000L).coerceAtLeast(0L)
                         mediaPlayer.time = target
@@ -466,6 +506,7 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                         Text("-10s")
                     }
 
+                    // Play / Pause
                     Button(onClick = {
                         if (isPlaying) {
                             mediaPlayer.pause()
@@ -479,6 +520,7 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                         Text(if (isPlaying) "Pause" else "Play")
                     }
 
+                    // Seek +10s
                     Button(onClick = {
                         val target = (mediaPlayer.time + 10000L).coerceAtMost(totalDuration)
                         mediaPlayer.time = target
@@ -487,9 +529,22 @@ fun VLCPlayerScreen(videoUrl: String, onClose: () -> Unit) {
                     }) {
                         Text("+10s")
                     }
+
+                    // Next Video
+                    Button(
+                        onClick = {
+                            if (currentIndex < playlist.size - 1) {
+                                currentIndex++
+                                showControls = true
+                            }
+                        },
+                        enabled = currentIndex < playlist.size - 1
+                    ) {
+                        Text("Next ⏭")
+                    }
                 }
 
-                // Bottom Timeline Slider & Timestamps
+                // Bottom Seekbar & Time Displays
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
